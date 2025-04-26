@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
+</head>
+<body>
+
+    <section class="hero is-medium is-dark">
+        <div class="hero-body">
+            <p class="title">Welcome, choose an E-campus PDF file to exercise with!</p>
+            <div class="file is-info has-name mb-5">
+                <label class="file-label">
+                    <input class="file-input" type="file" name="pdf" id="pdfFile" accept="application/pdf" />
+                    <span class="file-cta">
+                        <span class="file-icon">
+                            <i class="fas fa-upload"></i>
+                        </span>
+                        <span class="file-label">Choose a PDF…</span>
+                    </span>
+                    <span class="file-name">.pdf</span>
+                </label>
+            </div>
+    
+            <div id="quizContainer" class="container mt-5 p-5 box has-background-light"></div>
+            
+            <button class="button is-info" id="skipButton">Next Question</button>
+        </div>
+    </section>
+
+</body>
+
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>      
+    <script src="app.js"></script>
+    
+    
+</body>
+</html>
