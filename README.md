@@ -30,7 +30,7 @@ E-campus-Quiz-Helper è un'applicazione web progettata per creare e testare quiz
 
 ## Come utilizzare l'app
 
-1. Apri l'applicazione in un browser.
+1. Apri l'applicazione in un browser al link https://fralog4.github.io/E-campus-Quiz-Helper/
 2. Carica un file PDF Set Domande E-campus.
 3. Inizia il quiz rispondendo alle domande o saltandole con il pulsante "Salta".
 
