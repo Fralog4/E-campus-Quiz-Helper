@@ -73,8 +73,8 @@ const PdfParser = (() => {
    ------------------------------------------------------------------ */
 const QuestionParser = (() => {
 
-  // Matches standalone question numbers: "01." or "1." or "123."
-  const QUESTION_NUM_RE = /^(\d{1,3})\.\s*$/;
+  // Matches question numbers: "01." or "1." or "123." and captures any trailing text
+  const QUESTION_NUM_RE = /^(\d{1,3})\.\s*(.*)$/;
 
   // Matches lesson headers: "Lezione 005", "Lezione 12"
   const LESSON_RE = /^Lezione\s+(\d+)/;
@@ -96,13 +96,117 @@ const QuestionParser = (() => {
     return SKIP_PATTERNS.some(re => re.test(line));
   }
 
+  function unscrambleLine(line) {
+    let ctrlCount = 0;
+    for (let i = 0; i < line.length; i++) {
+      let code = line.charCodeAt(i);
+      if (code < 32 && code !== 9 && code !== 10 && code !== 13) ctrlCount++;
+    }
+
+    let isScrambled = (ctrlCount > 0);
+
+    if (!isScrambled) {
+      if (line.length <= 10 && !line.includes(' ')) {
+        let s29 = shiftString(line, 29);
+        if (/^\d{1,3}\.$/.test(s29)) return s29;
+      }
+      return line;
+    }
+
+    let freqs = {};
+    for (let i = 0; i < line.length; i++) {
+      let code = line.charCodeAt(i);
+      if (code < 32) {
+        freqs[code] = (freqs[code] || 0) + 1;
+      }
+    }
+
+    let bestSpaceCode = -1;
+    let maxCount = 0;
+    for (const [code, count] of Object.entries(freqs)) {
+      if (count > maxCount) {
+        maxCount = count;
+        bestSpaceCode = parseInt(code);
+      }
+    }
+
+    if (bestSpaceCode !== -1 && bestSpaceCode >= 2 && bestSpaceCode <= 10) {
+      let shift = 32 - bestSpaceCode;
+      let shifted = shiftString(line, shift);
+      if (getReadabilityScore(shifted) > line.length * 0.7) {
+        return shifted;
+      }
+    }
+
+    let bestShift = 0;
+    let bestScore = -1;
+    let bestStr = line;
+
+    for (let shift = 25; shift <= 32; shift++) {
+      let shifted = shiftString(line, shift);
+      let score = getReadabilityScore(shifted);
+      if (score > bestScore) {
+        bestScore = score;
+        bestShift = shift;
+        bestStr = shifted;
+      }
+    }
+
+    if (bestScore > line.length * 0.7) {
+      return bestStr;
+    }
+
+    return line;
+  }
+
+  function shiftString(str, amount) {
+    let res = "";
+    for (let i = 0; i < str.length; i++) {
+      res += String.fromCharCode(str.charCodeAt(i) + amount);
+    }
+    return res;
+  }
+
+  function getReadabilityScore(str) {
+    let score = 0;
+    for (let i = 0; i < str.length; i++) {
+      let code = str.charCodeAt(i);
+      if ((code >= 32 && code <= 126) || code === 224 || code === 232 || code === 233 || code === 236 || code === 242 || code === 249) {
+        score++;
+        if (
+          (code >= 97 && code <= 122) ||
+          (code >= 65 && code <= 90) ||
+          (code >= 48 && code <= 57) ||
+          code === 32
+        ) {
+          score += 0.5;
+        }
+      }
+    }
+    return score;
+  }
+
   /**
    * Parse text into an array of question objects.
    * @param {string} text - Cleaned text (preamble already removed)
    * @returns {Array<{number: string, question: string, options: string[], lesson: string}>}
    */
   function parse(text) {
-    const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    console.log("🚀 [DEBUG] Inizio parsing. Lunghezza testo:", text.length);
+    const rawLines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+
+    // Unscramble e logga le prime righe problematiche
+    const lines = rawLines.map((line, idx) => {
+      let unscrambled = unscrambleLine(line);
+      if (idx > 70 && idx < 95) {
+        console.log(`🔎 [DEBUG Riga ${idx}] Originale:`, line);
+        console.log(`🔎 [DEBUG Riga ${idx}] Decodificata:`, unscrambled);
+      }
+      return unscrambled;
+    });
+
+    console.log(`📝 [DEBUG] Trovate ${lines.length} righe non vuote.`);
+
     const questions = [];
     let currentLesson = "";
 
@@ -114,6 +218,7 @@ const QuestionParser = (() => {
       const lessonMatch = line.match(LESSON_RE);
       if (lessonMatch) {
         currentLesson = `Lezione ${lessonMatch[1]}`;
+        console.log(`📚 [DEBUG] Trovata ${currentLesson} alla riga: ${i}`);
         i++;
         continue;
       }
@@ -134,13 +239,11 @@ const QuestionParser = (() => {
       const qMatch = line.match(QUESTION_NUM_RE);
       if (qMatch) {
         const questionNumber = qMatch[1];
+        const questionTextOnSameLine = qMatch[2] ? qMatch[2].trim() : "";
+        console.log(`❓ [DEBUG] Trovata domanda ${questionNumber} alla riga ${i}`);
 
-        // Collect the question text (may span multiple lines until first option)
-        i++;
-        let questionText = "";
-
-        // The question text is the lines between the number and the first option.
         // First, scan ahead to find the next question number to know our boundary.
+        i++;
         let boundary = lines.length;
         for (let j = i; j < lines.length; j++) {
           if (QUESTION_NUM_RE.test(lines[j]) || LESSON_RE.test(lines[j])) {
@@ -149,46 +252,39 @@ const QuestionParser = (() => {
           }
         }
 
-        // Now within [i, boundary), the first line(s) are the question,
-        // and the rest are options. The tricky part is telling where the
-        // question ends and options begin.
-        //
-        // Heuristic: the question is the first run of lines. Since options
-        // in E-campus PDFs tend to start uniformly, we take the first line as
-        // the question and then check if subsequent lines BEFORE the option block
-        // are continuations.
-        //
-        // Actually the simplest robust approach: the question is the first line,
-        // and all subsequent lines up to the boundary are options.
-        // Some questions may span multiple lines, but rarely — and when they do,
-        // the last "option" would be too few. We handle this below.
+        let blockLines = lines.slice(i, boundary);
+        if (questionTextOnSameLine) {
+          blockLines.unshift(questionTextOnSameLine);
+        }
 
-        if (i >= boundary) {
-          // No content for this question number — skip
-          i++;
+        if (blockLines.length === 0) {
+          console.log(`⚠️ [DEBUG] Nessun contenuto per la domanda ${questionNumber}`);
+          i = boundary;
           continue;
         }
 
-        // Gather all lines in this question block
-        const blockLines = lines.slice(i, boundary);
+        console.log(`📦 [DEBUG] Righe blocco domanda ${questionNumber}:`, blockLines);
         i = boundary; // advance
 
         if (blockLines.length < 2) {
+          console.log(`⚠️ [DEBUG] Righe insufficienti per la domanda ${questionNumber}`);
           // Need at least question + 1 option — skip
           continue;
         }
 
         // Strategy: try splitting so that line 0 is question, lines 1+ are options.
-        // If that gives < 2 options, try merging the first two lines as question.
         let bestSplit = findBestSplit(blockLines);
 
         if (bestSplit) {
+          console.log(`✅ [DEBUG] Domanda ${questionNumber} parsata con successo`);
           questions.push({
             number: questionNumber,
             question: bestSplit.question,
             options: bestSplit.options,
             lesson: currentLesson,
           });
+        } else {
+          console.log(`❌ [DEBUG] Impossibile dividere domanda ${questionNumber}`);
         }
 
         continue;
@@ -198,6 +294,7 @@ const QuestionParser = (() => {
       i++;
     }
 
+    console.log(`🏁 [DEBUG] Fine parsing. Domande trovate: ${questions.length}`);
     return questions;
   }
 
@@ -295,19 +392,18 @@ const QuizEngine = (() => {
 
   let questions = [];
   let currentIndex = 0;
-  let score = { correct: 0, wrong: 0 };
-  let answers = []; // Track user's answer per question: null | 'correct' | 'wrong'
+  let answers = []; // Track user's defined correct answer (locked): string (the option text)
+  let selected = []; // Track user's temporary current selection: string
 
   function init(parsedQuestions) {
     questions = parsedQuestions.map(q => ({
       ...q,
-      // Shuffle options but remember original order (first option = correct in E-campus)
-      correctAnswer: q.options[0],
+      // Shuffle options but remember them
       shuffledOptions: shuffleArray([...q.options]),
     }));
     currentIndex = 0;
-    score = { correct: 0, wrong: 0 };
     answers = new Array(questions.length).fill(null);
+    selected = new Array(questions.length).fill(null);
   }
 
   function getCurrent() {
@@ -317,19 +413,25 @@ const QuizEngine = (() => {
 
   function getIndex() { return currentIndex; }
   function getTotal() { return questions.length; }
-  function getScore() { return { ...score }; }
   function getAnswer(idx) { return answers[idx]; }
+  function getSelected(idx) { return selected[idx]; }
 
-  function answerCurrent(selectedOption) {
-    const q = getCurrent();
-    if (!q || answers[currentIndex] !== null) return null; // already answered
+  // Ritorna il numero di domande a cui l'utente ha assegnato una risposta
+  function getAnsweredCount() {
+    return answers.filter(a => a !== null).length;
+  }
 
-    const isCorrect = selectedOption === q.correctAnswer;
-    answers[currentIndex] = isCorrect ? "correct" : "wrong";
-    if (isCorrect) score.correct++;
-    else score.wrong++;
+  function selectCurrent(selectedOption) {
+    if (answers[currentIndex] !== null) return false; // already locked
+    selected[currentIndex] = selectedOption; // Allow switching selection
+    return true;
+  }
 
-    return isCorrect;
+  function lockCurrent(selectedOption) {
+    if (answers[currentIndex] !== null) return false;
+    answers[currentIndex] = selectedOption;
+    selected[currentIndex] = selectedOption; // Ensure it's selected as well
+    return true;
   }
 
   function next() {
@@ -364,7 +466,7 @@ const QuizEngine = (() => {
     return arr;
   }
 
-  return { init, getCurrent, getIndex, getTotal, getScore, getAnswer, answerCurrent, next, prev, isComplete, isAtEnd };
+  return { init, getCurrent, getIndex, getTotal, getAnswer, getSelected, getAnsweredCount, selectCurrent, lockCurrent, next, prev, isComplete, isAtEnd };
 })();
 
 
@@ -388,8 +490,12 @@ const QuizUI = (() => {
     dom.loading = $("loading");
     dom.progressBar = $("progressBar");
     dom.progressText = $("progressText");
+    // Nascondiamo i vecchi badge score perché il quiz ora è in "modalità studio"
     dom.scoreCorrect = $("scoreCorrect");
     dom.scoreWrong = $("scoreWrong");
+    if (dom.scoreCorrect && dom.scoreCorrect.parentElement) dom.scoreCorrect.parentElement.style.display = 'none';
+    if (dom.scoreWrong && dom.scoreWrong.parentElement) dom.scoreWrong.parentElement.style.display = 'none';
+
     dom.lessonBadge = $("lessonBadge");
     dom.questionNumber = $("questionNumber");
     dom.questionText = $("questionText");
@@ -577,15 +683,13 @@ const QuizUI = (() => {
 
     const idx = QuizEngine.getIndex();
     const total = QuizEngine.getTotal();
-    const score = QuizEngine.getScore();
-    const previousAnswer = QuizEngine.getAnswer(idx);
+    const previousLocked = QuizEngine.getAnswer(idx);
+    const previousSelected = QuizEngine.getSelected(idx);
 
     // Progress
     const progress = ((idx + 1) / total) * 100;
     dom.progressBar.style.width = progress + "%";
     dom.progressText.textContent = `Domanda ${idx + 1} di ${total}`;
-    dom.scoreCorrect.textContent = score.correct;
-    dom.scoreWrong.textContent = score.wrong;
 
     // Lesson badge
     if (q.lesson) {
@@ -607,10 +711,17 @@ const QuizUI = (() => {
       const btn = document.createElement("button");
       btn.className = "quiz-option";
 
-      if (previousAnswer !== null) {
+      // Applico logica disabilitazione e colore
+      if (previousLocked !== null) {
         btn.classList.add("quiz-option--disabled");
-        if (opt === q.correctAnswer) {
-          btn.classList.add("quiz-option--correct");
+        if (opt === previousLocked) {
+          btn.classList.add("quiz-option--correct"); // Verde: l'utente l'ha fissata
+        }
+      } else if (previousSelected !== null) {
+        // Se c'è una selezione ma non è lockata
+        if (opt === previousSelected) {
+          btn.style.borderColor = "var(--primary-color, #705DFA)"; // Simula click
+          btn.style.boxShadow = "0 0 0 1px var(--primary-color, #705DFA)";
         }
       }
 
@@ -625,8 +736,8 @@ const QuizUI = (() => {
       btn.appendChild(letter);
       btn.appendChild(text);
 
-      if (previousAnswer === null) {
-        btn.addEventListener("click", () => handleAnswer(opt));
+      if (previousLocked === null) {
+        btn.addEventListener("click", () => handleOptionClick(opt, btn));
       }
 
       dom.optionsContainer.appendChild(btn);
@@ -634,16 +745,13 @@ const QuizUI = (() => {
 
     // If previously answered wrong, also highlight the wrong one
     // (we need to do this after rendering all options)
-    if (previousAnswer === "wrong") {
-      // Find which button the user clicked — we don't store that,
-      // so just show all wrong ones as disabled and correct one as correct
-      // That's already handled above.
-    }
 
     // Navigation buttons
     dom.btnPrev.disabled = idx === 0;
-    dom.btnSkip.style.display = previousAnswer === null ? "" : "none";
-    dom.btnNext.style.display = previousAnswer !== null ? "" : "none";
+
+    // Possiamo skippare / andare avanti liberamente ora che il quiz è per studio
+    dom.btnSkip.style.display = (previousLocked === null && previousSelected === null) ? "" : "none";
+    dom.btnNext.style.display = (previousLocked !== null || previousSelected !== null) ? "" : "none";
     dom.btnNext.disabled = false;
     dom.btnNext.textContent = QuizEngine.isAtEnd() ? "Risultati →" : "Prossima →";
 
@@ -654,67 +762,72 @@ const QuizUI = (() => {
     card.classList.add("fade-in");
   }
 
-  function handleAnswer(selectedOption) {
-    const result = QuizEngine.answerCurrent(selectedOption);
-    if (result === null) return; // already answered
+  function handleOptionClick(optText, btnElem) {
+    const isAlreadySelected = QuizEngine.getSelected(QuizEngine.getIndex()) === optText;
 
-    const q = QuizEngine.getCurrent();
-    const buttons = dom.optionsContainer.querySelectorAll(".quiz-option");
+    if (isAlreadySelected) {
+      // Secondo clic = Lock (corretta)
+      const locked = QuizEngine.lockCurrent(optText);
+      if (!locked) return;
 
-    buttons.forEach(btn => {
-      const optText = btn.querySelector(".quiz-option__text").textContent;
-      btn.classList.add("quiz-option--disabled");
+      const buttons = dom.optionsContainer.querySelectorAll(".quiz-option");
+      buttons.forEach(btn => {
+        btn.classList.add("quiz-option--disabled");
+        // Reset inline styles
+        btn.style.borderColor = "";
+        btn.style.boxShadow = "";
 
-      if (optText === q.correctAnswer) {
-        btn.classList.add("quiz-option--correct");
-      } else if (optText === selectedOption && !result) {
-        btn.classList.add("quiz-option--wrong");
+        if (btn.querySelector(".quiz-option__text").textContent === optText) {
+          btn.classList.add("quiz-option--correct");
+        }
+      });
+
+    } else {
+      // Primo clic: seleziona e basta
+      const selectedSuccess = QuizEngine.selectCurrent(optText);
+      if (!selectedSuccess) {
+        // in case it was a different option we were trying to select 
+        // (which should be allowed, we just switch the selection before locking)
+        QuizEngine.selectCurrent(optText); // we need the engine to be able to switch selection
       }
-    });
 
-    // Update score display
-    const score = QuizEngine.getScore();
-    dom.scoreCorrect.textContent = score.correct;
-    dom.scoreWrong.textContent = score.wrong;
+      const buttons = dom.optionsContainer.querySelectorAll(".quiz-option");
+      buttons.forEach(btn => {
+        if (btn.querySelector(".quiz-option__text").textContent === optText) {
+          btn.style.borderColor = "var(--primary-color, #705DFA)";
+          btn.style.boxShadow = "0 0 0 1px var(--primary-color, #705DFA)";
+        } else {
+          btn.style.borderColor = "";
+          btn.style.boxShadow = "";
+        }
+      });
+    }
 
-    // Show next button, hide skip
+    // Aggiorna pulsanti navigazione
     dom.btnSkip.style.display = "none";
     dom.btnNext.style.display = "";
     dom.btnNext.textContent = QuizEngine.isAtEnd() ? "Risultati →" : "Prossima →";
   }
 
-  function showResults() {
-    const score = QuizEngine.getScore();
-    const total = QuizEngine.getTotal();
-    const answered = score.correct + score.wrong;
-    const percentage = answered > 0 ? Math.round((score.correct / answered) * 100) : 0;
 
-    // Choose emoji and message based on score
-    let icon, title, subtitle;
-    if (percentage >= 80) {
-      icon = "🏆";
-      title = "Ottimo lavoro!";
-      subtitle = `Hai risposto correttamente al ${percentage}% delle domande.`;
-    } else if (percentage >= 60) {
-      icon = "💪";
-      title = "Buon risultato!";
-      subtitle = `Hai risposto correttamente al ${percentage}% delle domande. Continua a studiare!`;
-    } else if (percentage >= 40) {
-      icon = "📚";
-      title = "Si può migliorare";
-      subtitle = `Hai risposto correttamente al ${percentage}% delle domande. Riprova dopo aver ripassato.`;
-    } else {
-      icon = "🎯";
-      title = "Non arrenderti!";
-      subtitle = `Hai risposto correttamente al ${percentage}% delle domande. Ripassa il materiale e ritenta.`;
-    }
+  function showResults() {
+    const total = QuizEngine.getTotal();
+    const answered = QuizEngine.getAnsweredCount();
+    const percentage = answered > 0 ? Math.round((answered / total) * 100) : 0;
+
+    // Poiché siamo in modalità ripasso/salvataggio
+    let icon = "�";
+    let title = "Sessione completata";
+    let subtitle = `Hai selezionato la risposta per ${answered} domande su ${total} (${percentage}%).`;
 
     dom.resultsIcon.textContent = icon;
     dom.resultsTitle.textContent = title;
     dom.resultsSubtitle.textContent = subtitle;
-    dom.resultCorrectCount.textContent = score.correct;
-    dom.resultWrongCount.textContent = score.wrong;
-    dom.resultTotalCount.textContent = total;
+
+    // Rimuoviamo il dettaglio errori/corrette dai risultati
+    if (dom.resultCorrectCount) dom.resultCorrectCount.parentElement.style.display = 'none';
+    if (dom.resultWrongCount) dom.resultWrongCount.parentElement.style.display = 'none';
+    if (dom.resultTotalCount) dom.resultTotalCount.parentElement.style.display = 'none';
 
     showSection("results");
   }
