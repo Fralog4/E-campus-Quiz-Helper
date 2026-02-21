@@ -1,48 +1,121 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-campus Quiz Helper — Esercitati con i Set Domande</title>
+  <meta name="description" content="Carica un PDF Set Domande E-campus e allenati con un quiz interattivo. Parsing automatico, punteggio in tempo reale, feedback immediato.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <section class="hero is-medium is-dark">
-        <div class="hero-body">
-            <div class="navbar-start">
-                <div class="buttons">
-                 <a href="https://github.com/Fralog4/E-campus-Quiz-Helper" class="button is-dark is-medium">Github</a>
-             </div>
-         </div>
-            <p class="title">Benvenuto, carica un PDF per esercitarti</p>
-            <div class="file is-info has-name mb-5">
-                <label class="file-label">
-                    <input class="file-input" type="file" name="pdf" id="pdfFile" accept="application/pdf" />
-                    <span class="file-cta">
-                        <span class="file-icon">
-                            <i class="fas fa-upload"></i>
-                        </span>
-                        <span class="file-label">Choose a PDF…</span>
-                    </span>
-                    <span class="file-name">.pdf</span>
-                </label>
-            </div>
-    
-            <div id="quizContainer" class="container mt-5 p-5 box has-background-light"></div>
-            
-            <button class="button is-info" id="skipButton">Next Question</button>
-        </div>
+  <!-- Header -->
+  <header class="app-header">
+    <a href="./" class="app-header__logo">
+      <span class="app-header__icon">📝</span>
+      <span class="app-header__title">E-campus <span>Quiz Helper</span></span>
+    </a>
+    <a href="https://github.com/Fralog4/E-campus-Quiz-Helper" target="_blank" rel="noopener" class="app-header__github">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </header>
+
+  <!-- Main -->
+  <main class="app-main">
+
+    <!-- Upload Section -->
+    <section id="uploadSection" class="upload-section">
+      <h1 class="upload-section__title">Esercitati con i Quiz</h1>
+      <p class="upload-section__subtitle">
+        Carica un PDF <strong>Set Domande E-campus</strong> e inizia subito ad allenarti.<br>
+        Punteggio in tempo reale e feedback immediato.
+      </p>
+      <div id="uploadArea" class="upload-area">
+        <span class="upload-area__icon">📄</span>
+        <p class="upload-area__text">Trascina qui il PDF oppure <strong>clicca per selezionare</strong></p>
+        <p class="upload-area__hint">Solo file .pdf — Set Domande E-campus</p>
+        <input type="file" id="pdfInput" accept="application/pdf">
+      </div>
+      <p id="fileName" class="upload-section__filename"></p>
+      <div id="loading" class="loading">
+        <div class="loading__spinner"></div>
+        <p class="loading__text">Analizzando il PDF…</p>
+      </div>
     </section>
 
-</body>
+    <!-- Quiz Section -->
+    <section id="quizSection" class="quiz-section">
+      <!-- Progress bar -->
+      <div class="quiz-progress">
+        <div class="quiz-progress__bar-container">
+          <div id="progressBar" class="quiz-progress__bar"></div>
+        </div>
+        <div class="quiz-progress__info">
+          <span id="progressText">Domanda 1 di 0</span>
+          <span class="quiz-progress__score">
+            ✅ <span id="scoreCorrect" class="quiz-progress__score-correct">0</span>
+            &nbsp;·&nbsp;
+            ❌ <span id="scoreWrong" class="quiz-progress__score-wrong">0</span>
+          </span>
+        </div>
+      </div>
 
+      <!-- Question card -->
+      <div id="quizCard" class="quiz-card">
+        <p id="lessonBadge" class="quiz-lesson"></p>
+        <p id="questionNumber" class="quiz-card__number"></p>
+        <h2 id="questionText" class="quiz-card__question"></h2>
+        <div id="optionsContainer" class="quiz-options"></div>
+        <div class="quiz-actions">
+          <button id="btnPrev" class="btn btn--ghost" disabled>← Indietro</button>
+          <button id="btnSkip" class="btn btn--ghost">Salta →</button>
+          <button id="btnNext" class="btn btn--primary" disabled style="display:none;">Prossima →</button>
+        </div>
+      </div>
+    </section>
 
+    <!-- Results Section -->
+    <section id="resultsSection" class="results-section">
+      <div class="results-card">
+        <div id="resultsIcon" class="results-card__icon"></div>
+        <h2 id="resultsTitle" class="results-card__title"></h2>
+        <p id="resultsSubtitle" class="results-card__subtitle"></p>
+        <div class="results-stats">
+          <div class="results-stat">
+            <div id="resultCorrectCount" class="results-stat__value results-stat__value--correct">0</div>
+            <div class="results-stat__label">Corrette</div>
+          </div>
+          <div class="results-stat">
+            <div id="resultWrongCount" class="results-stat__value results-stat__value--wrong">0</div>
+            <div class="results-stat__label">Sbagliate</div>
+          </div>
+          <div class="results-stat">
+            <div id="resultTotalCount" class="results-stat__value results-stat__value--total">0</div>
+            <div class="results-stat__label">Totali</div>
+          </div>
+        </div>
+        <div class="results-actions">
+          <button id="btnRestart" class="btn btn--ghost">🔄 Ricomincia</button>
+          <button id="btnNewPdf" class="btn btn--primary">📄 Nuovo PDF</button>
+        </div>
+      </div>
+    </section>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>      
-    <script src="app.js"></script>
-    
-    
+  </main>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    Made with ❤️ for studenti E-campus · <a href="https://github.com/Fralog4/E-campus-Quiz-Helper" target="_blank">Open Source</a>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+  <script src="app.js"></script>
+
 </body>
 </html>
